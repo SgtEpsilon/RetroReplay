@@ -1,0 +1,210 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RetroReplay — Image Assets</title>
+
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #101329;
+      color: #eee;
+      max-width: 1000px;
+      margin: 40px auto;
+      padding: 0 20px;
+    }
+
+    h1 { color: #ff4fcf; }
+
+    p { color: #bbb; }
+
+    .image-link {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px;
+      margin: 10px 0;
+      background: #20223d;
+      border: 1px solid #383052;
+      border-radius: 8px;
+      overflow-wrap: anywhere;
+    }
+
+    .image-link a {
+      color: #9bc7ff;
+      flex: 1;
+    }
+
+    button {
+      background: #d82b9c;
+      color: white;
+      border: 0;
+      padding: 9px 12px;
+      border-radius: 5px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    button:hover { background: #f04cbd; }
+
+    #search {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 12px;
+      margin: 15px 0;
+      background: #20223d;
+      color: white;
+      border: 1px solid #51416f;
+      border-radius: 6px;
+    }
+
+    .filename {
+      display: block;
+      color: #aaa;
+      font-size: 12px;
+      margin-top: 5px;
+    }
+  </style>
+</head>
+
+<body>
+  <h1>RETRO REPLAY</h1>
+  <p>Image asset library — click a filename to open the image,
+     or copy its direct URL to use elsewhere.</p>
+
+  <input id="search" type="search"
+         placeholder="Search image filenames...">
+
+  <p id="status">Loading images...</p>
+  <div id="images"></div>
+
+  <script>
+    const owner = "SgtEpsilon";
+    const repo = "RetroReplay";
+
+    const container = document.getElementById("images");
+    const status = document.getElementById("status");
+    const search = document.getElementById("search");
+
+    let imageRows = [];
+
+    async function loadImages() {
+      try {
+        const repoResponse = await fetch(
+          `https://api.github.com/repos/${owner}/${repo}`
+        );
+
+        if (!repoResponse.ok) {
+          throw new Error("Repository not found or not public.");
+        }
+
+        const repoData = await repoResponse.json();
+        const branch = repoData.default_branch;
+
+        const treeResponse = await fetch(
+          `https://api.github.com/repos/${owner}/${repo}/git/trees/${branch}?recursive=1`
+        );
+
+        if (!treeResponse.ok) {
+          throw new Error("Could not retrieve repository files.");
+        }
+
+        const treeData = await treeResponse.json();
+
+        const images = treeData.tree
+          .filter(file =>
+            file.type === "blob" &&
+            /\.(png|jpe?g|gif|webp|bmp|svg|avif|ico)$/i
+              .test(file.path)
+          )
+          .sort((a, b) => a.path.localeCompare(b.path));
+
+        container.replaceChildren();
+        imageRows = [];
+
+        for (const file of images) {
+          const encodedPath = file.path
+            .split("/")
+            .map(encodeURIComponent)
+            .join("/");
+
+          const url =
+            `https://raw.githubusercontent.com/${owner}/${repo}/${encodeURIComponent(branch)}/${encodedPath}`;
+
+          const row = document.createElement("div");
+          row.className = "image-link";
+
+          const details = document.createElement("div");
+          details.style.flex = "1";
+          details.style.minWidth = "0";
+
+          const link = document.createElement("a");
+          link.href = url;
+          link.target = "_blank";
+          link.rel = "noopener noreferrer";
+          link.textContent = file.path;
+
+          const directUrl = document.createElement("span");
+          directUrl.className = "filename";
+          directUrl.textContent = url;
+
+          details.append(link, directUrl);
+
+          const copy = document.createElement("button");
+          copy.textContent = "Copy link";
+
+          copy.addEventListener("click", async () => {
+            try {
+              await navigator.clipboard.writeText(url);
+              copy.textContent = "Copied!";
+              setTimeout(() => copy.textContent = "Copy link", 1500);
+            } catch {
+              window.prompt("Copy this image URL:", url);
+            }
+          });
+
+          row.append(details, copy);
+          container.appendChild(row);
+
+          imageRows.push({
+            row,
+            path: file.path.toLowerCase()
+          });
+        }
+
+        status.textContent =
+          `${images.length} image${images.length === 1 ? "" : "s"} found`;
+
+        if (treeData.truncated) {
+          status.textContent +=
+            " — GitHub returned a truncated file list.";
+        }
+
+        if (!images.length) {
+          status.textContent = "No images found in this repository.";
+        }
+
+      } catch (error) {
+        status.textContent = error.message;
+      }
+    }
+
+    search.addEventListener("input", () => {
+      const query = search.value.toLowerCase();
+      let visible = 0;
+
+      for (const item of imageRows) {
+        const matches = item.path.includes(query);
+        item.row.hidden = !matches;
+        if (matches) visible++;
+      }
+
+      status.textContent = `${visible} matching image(s)`;
+    });
+
+    loadImages();
+  </script>
+</body>
+</html>

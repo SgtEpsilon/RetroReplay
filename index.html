@@ -1,4 +1,3 @@
-```html
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -67,6 +66,69 @@
       gap: 10px;
     }
 
+    .folder {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    .folder > summary {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 14px;
+      cursor: pointer;
+      font-weight: bold;
+      list-style: none;
+      user-select: none;
+    }
+
+    .folder > summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .folder > summary::before {
+      content: "\25B8";
+      color: var(--accent);
+      display: inline-block;
+      transition: transform 0.15s;
+    }
+
+    .folder[open] > summary::before {
+      transform: rotate(90deg);
+    }
+
+    .folder > summary:hover {
+      background: #2a2c4d;
+    }
+
+    .folder > summary:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: -2px;
+    }
+
+    .folder-icon {
+      font-size: 18px;
+    }
+
+    .folder-count {
+      margin-left: auto;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: normal;
+    }
+
+    .folder-contents {
+      display: grid;
+      gap: 10px;
+      padding: 0 12px 12px 12px;
+    }
+
+    .folder .folder {
+      background: var(--background);
+    }
+
     .image-link {
       display: flex;
       align-items: center;
@@ -75,6 +137,10 @@
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: 8px;
+    }
+
+    .folder .image-link {
+      background: #191b35;
     }
 
     .image-details {
@@ -156,6 +222,8 @@
   <div class="toolbar">
     <button id="refresh" type="button">Refresh images</button>
     <button id="clearSearch" type="button">Clear search</button>
+    <button id="expandAll" type="button">Expand all</button>
+    <button id="collapseAll" type="button">Collapse all</button>
   </div>
 
   <input
@@ -195,6 +263,9 @@
 
     let allImages = [];
     let loadInProgress = false;
+
+    // Folder paths the user has opened (kept across searches/refreshes).
+    const openFolders = new Set();
 
     // Safely encode each section of a repository path.
     // Folder separators remain intact.
@@ -243,8 +314,128 @@
       }
     }
 
+    // Build a folder tree from a flat list of image paths.
+    function buildTree(images) {
+      const root = { name: "", path: "", folders: new Map(), images: [] };
+
+      for (const image of images) {
+        const parts = image.path.split("/");
+        const fileName = parts.pop();
+        let node = root;
+        let currentPath = "";
+
+        for (const part of parts) {
+          currentPath = currentPath ? `${currentPath}/${part}` : part;
+
+          if (!node.folders.has(part)) {
+            node.folders.set(part, {
+              name: part,
+              path: currentPath,
+              folders: new Map(),
+              images: []
+            });
+          }
+
+          node = node.folders.get(part);
+        }
+
+        node.images.push({ ...image, fileName });
+      }
+
+      return root;
+    }
+
+    function countImages(node) {
+      let total = node.images.length;
+
+      for (const child of node.folders.values()) {
+        total += countImages(child);
+      }
+
+      return total;
+    }
+
+    function createImageRow(image, showFullPath) {
+      const row = createElement("article", "image-link");
+      const details = createElement("div", "image-details");
+
+      const link = createElement(
+        "a",
+        "",
+        showFullPath ? image.path : image.fileName
+      );
+      link.href = image.url;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+
+      const urlLabel = createElement("span", "filename", image.url);
+      const copyButton = createElement("button", "", "Copy link");
+      copyButton.type = "button";
+
+      copyButton.addEventListener("click", () => {
+        copyToClipboard(image.url, copyButton);
+      });
+
+      details.append(link, urlLabel);
+      row.append(details, copyButton);
+      return row;
+    }
+
+    function createFolderElement(node, searching) {
+      const folder = document.createElement("details");
+      folder.className = "folder";
+      folder.dataset.path = node.path;
+
+      // While searching, matching folders open automatically.
+      // Otherwise, remember what the user opened.
+      folder.open = searching || openFolders.has(node.path);
+
+      folder.addEventListener("toggle", () => {
+        if (search.value.trim()) {
+          return;
+        }
+
+        if (folder.open) {
+          openFolders.add(node.path);
+        } else {
+          openFolders.delete(node.path);
+        }
+      });
+
+      const summary = document.createElement("summary");
+      summary.append(
+        createElement("span", "folder-icon", "\uD83D\uDCC1"),
+        createElement("span", "", node.name),
+        createElement(
+          "span",
+          "folder-count",
+          `${countImages(node)} ${countImages(node) === 1 ? "image" : "images"}`
+        )
+      );
+
+      const contents = createElement("div", "folder-contents");
+
+      const subfolders = [...node.folders.values()]
+        .sort((a, b) => a.name.localeCompare(b.name));
+
+      for (const child of subfolders) {
+        contents.appendChild(createFolderElement(child, searching));
+      }
+
+      const files = [...node.images]
+        .sort((a, b) => a.fileName.localeCompare(b.fileName));
+
+      for (const image of files) {
+        contents.appendChild(createImageRow(image, false));
+      }
+
+      folder.append(summary, contents);
+      return folder;
+    }
+
     function renderImages() {
       const query = search.value.trim().toLowerCase();
+      const searching = query.length > 0;
 
       const filteredImages = allImages.filter(image =>
         image.path.toLowerCase().includes(query)
@@ -252,38 +443,22 @@
 
       container.replaceChildren();
 
+      const tree = buildTree(filteredImages);
       const fragment = document.createDocumentFragment();
 
-      for (const image of filteredImages) {
-        const row = createElement("article", "image-link");
-        const details = createElement("div", "image-details");
+      // Folders first, then any images sitting in the repository root.
+      const topFolders = [...tree.folders.values()]
+        .sort((a, b) => a.name.localeCompare(b.name));
 
-        const link = createElement("a", "", image.path);
-        link.href = image.url;
-        link.target = "_blank";
-        link.rel = "noopener noreferrer";
+      for (const folder of topFolders) {
+        fragment.appendChild(createFolderElement(folder, searching));
+      }
 
-        const urlLabel = createElement(
-          "span",
-          "filename",
-          image.url
-        );
+      const rootFiles = [...tree.images]
+        .sort((a, b) => a.fileName.localeCompare(b.fileName));
 
-        const copyButton = createElement(
-          "button",
-          "",
-          "Copy link"
-        );
-
-        copyButton.type = "button";
-
-        copyButton.addEventListener("click", () => {
-          copyToClipboard(image.url, copyButton);
-        });
-
-        details.append(link, urlLabel);
-        row.append(details, copyButton);
-        fragment.appendChild(row);
+      for (const image of rootFiles) {
+        fragment.appendChild(createImageRow(image, false));
       }
 
       container.appendChild(fragment);
@@ -294,6 +469,22 @@
 
       status.textContent =
         `Showing ${filteredImages.length} of ${allImages.length} images`;
+    }
+
+    function setAllFolders(open) {
+      const folders = container.querySelectorAll("details.folder");
+
+      for (const folder of folders) {
+        folder.open = open;
+
+        if (!search.value.trim()) {
+          if (open) {
+            openFolders.add(folder.dataset.path);
+          } else {
+            openFolders.delete(folder.dataset.path);
+          }
+        }
+      }
     }
 
     async function loadImages() {
@@ -423,6 +614,12 @@
       search.focus();
     });
 
+    document.getElementById("expandAll")
+      .addEventListener("click", () => setAllFolders(true));
+
+    document.getElementById("collapseAll")
+      .addEventListener("click", () => setAllFolders(false));
+
     // Manually fetch the latest repository contents.
     refreshButton.addEventListener("click", loadImages);
 
@@ -431,4 +628,3 @@
   </script>
 </body>
 </html>
-```

@@ -1,212 +1,434 @@
+```html
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101329">
+
   <title>RetroReplay — Image Assets</title>
 
   <style>
+    :root {
+      --background: #101329;
+      --surface: #20223d;
+      --border: #383052;
+      --accent: #ff4fcf;
+      --link: #9bc7ff;
+      --text: #eeeeee;
+      --muted: #aaaabb;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
     body {
       font-family: Arial, sans-serif;
-      background: #101329;
-      color: #eee;
-      max-width: 1000px;
+      background: var(--background);
+      color: var(--text);
+      max-width: 1100px;
       margin: 40px auto;
       padding: 0 20px;
     }
 
-    h1 { color: #ff4fcf; }
-    p { color: #bbb; }
+    h1 {
+      color: var(--accent);
+      margin-bottom: 8px;
+    }
+
+    p {
+      color: var(--muted);
+      line-height: 1.5;
+    }
+
+    #search {
+      width: 100%;
+      padding: 13px;
+      margin: 15px 0;
+      background: var(--surface);
+      color: var(--text);
+      border: 1px solid #51416f;
+      border-radius: 6px;
+      font-size: 15px;
+    }
+
+    #search:focus {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+
+    #status {
+      min-height: 24px;
+    }
+
+    #images {
+      display: grid;
+      gap: 10px;
+    }
 
     .image-link {
       display: flex;
       align-items: center;
       gap: 12px;
-      padding: 12px;
-      margin: 10px 0;
-      background: #20223d;
-      border: 1px solid #383052;
+      padding: 14px;
+      background: var(--surface);
+      border: 1px solid var(--border);
       border-radius: 8px;
-      overflow-wrap: anywhere;
+    }
+
+    .image-details {
+      flex: 1;
+      min-width: 0;
     }
 
     .image-link a {
-      color: #9bc7ff;
-      flex: 1;
+      color: var(--link);
+      overflow-wrap: anywhere;
+    }
+
+    .filename {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      margin-top: 6px;
+      overflow-wrap: anywhere;
     }
 
     button {
       background: #d82b9c;
       color: white;
       border: 0;
-      padding: 9px 12px;
+      padding: 10px 13px;
       border-radius: 5px;
       cursor: pointer;
       white-space: nowrap;
+      font-size: 13px;
     }
 
-    button:hover { background: #f04cbd; }
-
-    #search {
-      width: 100%;
-      box-sizing: border-box;
-      padding: 12px;
-      margin: 15px 0;
-      background: #20223d;
-      color: white;
-      border: 1px solid #51416f;
-      border-radius: 6px;
+    button:hover {
+      background: #f04cbd;
     }
 
-    .filename {
-      display: block;
-      color: #aaa;
-      font-size: 12px;
-      margin-top: 5px;
+    button:focus-visible {
+      outline: 2px solid white;
+      outline-offset: 2px;
     }
 
-    [hidden] { display: none !important; }
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+    }
+
+    [hidden] {
+      display: none !important;
+    }
 
     @media (max-width: 600px) {
+      body {
+        margin-top: 24px;
+        padding: 0 12px;
+      }
+
       .image-link {
         align-items: flex-start;
         flex-direction: column;
       }
-      .image-link button { align-self: flex-start; }
+
+      .image-link button {
+        align-self: flex-start;
+      }
     }
   </style>
 </head>
 
 <body>
-  <h1>RETRO REPLAY</h1>
-  <p>Image asset library — click a filename to open the image, or copy its direct GitHub Pages URL.</p>
+  <header>
+    <h1>RETRO REPLAY</h1>
+    <p>
+      Image asset library. Browse the images in the repository,
+      open an image, or copy its GitHub Pages URL.
+    </p>
+  </header>
 
-  <input id="search" type="search" placeholder="Search image filenames..." aria-label="Search image filenames">
-  <p id="status" role="status">Loading images...</p>
-  <div id="images"></div>
+  <div class="toolbar">
+    <button id="refresh" type="button">Refresh images</button>
+    <button id="clearSearch" type="button">Clear search</button>
+  </div>
+
+  <input
+    id="search"
+    type="search"
+    placeholder="Search filenames and folders..."
+    aria-label="Search image filenames and folders"
+  >
+
+  <p id="status" role="status" aria-live="polite">
+    Loading images from GitHub...
+  </p>
+
+  <main id="images" aria-label="Repository image assets"></main>
 
   <script>
-    const owner = "SgtEpsilon";
-    const repo = "RetroReplay";
-    const pagesBase = `https://${owner.toLowerCase()}.github.io/${repo}/`;
+    "use strict";
+
+    // Repository configuration
+    const OWNER = "SgtEpsilon";
+    const REPO = "RetroReplay";
+
+    const API_BASE =
+      `https://api.github.com/repos/${OWNER}/${REPO}`;
+
+    const PAGES_BASE =
+      `https://${OWNER.toLowerCase()}.github.io/${REPO}/`;
+
+    const IMAGE_EXTENSIONS =
+      /\.(png|jpe?g|gif|webp|bmp|svg|avif|ico)$/i;
 
     const container = document.getElementById("images");
     const status = document.getElementById("status");
     const search = document.getElementById("search");
+    const refreshButton = document.getElementById("refresh");
+    const clearSearchButton = document.getElementById("clearSearch");
 
-    let imageRows = [];
+    let allImages = [];
+    let loadInProgress = false;
 
-    async function loadImages() {
+    // Safely encode each section of a repository path.
+    // Folder separators remain intact.
+    function getPagesUrl(path) {
+      const encodedPath = path
+        .split("/")
+        .map(part => encodeURIComponent(part))
+        .join("/");
+
+      return PAGES_BASE + encodedPath;
+    }
+
+    // Create elements without inserting repository data as HTML.
+    function createElement(tag, className, text) {
+      const element = document.createElement(tag);
+
+      if (className) {
+        element.className = className;
+      }
+
+      if (text !== undefined) {
+        element.textContent = text;
+      }
+
+      return element;
+    }
+
+    async function copyToClipboard(url, button) {
       try {
-        const repoResponse = await fetch(
-          `https://api.github.com/repos/${owner}/${repo}`
+        if (navigator.clipboard && window.isSecureContext) {
+          await navigator.clipboard.writeText(url);
+        } else {
+          throw new Error("Clipboard API unavailable");
+        }
+
+        button.textContent = "Copied!";
+      } catch {
+        window.prompt("Copy this image URL:", url);
+        button.textContent = "Copy link";
+      }
+
+      if (button.textContent === "Copied!") {
+        setTimeout(() => {
+          button.textContent = "Copy link";
+        }, 1500);
+      }
+    }
+
+    function renderImages() {
+      const query = search.value.trim().toLowerCase();
+
+      const filteredImages = allImages.filter(image =>
+        image.path.toLowerCase().includes(query)
+      );
+
+      container.replaceChildren();
+
+      const fragment = document.createDocumentFragment();
+
+      for (const image of filteredImages) {
+        const row = createElement("article", "image-link");
+        const details = createElement("div", "image-details");
+
+        const link = createElement("a", "", image.path);
+        link.href = image.url;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+
+        const urlLabel = createElement(
+          "span",
+          "filename",
+          image.url
         );
 
+        const copyButton = createElement(
+          "button",
+          "",
+          "Copy link"
+        );
+
+        copyButton.type = "button";
+
+        copyButton.addEventListener("click", () => {
+          copyToClipboard(image.url, copyButton);
+        });
+
+        details.append(link, urlLabel);
+        row.append(details, copyButton);
+        fragment.appendChild(row);
+      }
+
+      container.appendChild(fragment);
+
+      if (allImages.length === 0) {
+        return;
+      }
+
+      status.textContent =
+        `Showing ${filteredImages.length} of ${allImages.length} images`;
+    }
+
+    async function loadImages() {
+      if (loadInProgress) {
+        return;
+      }
+
+      loadInProgress = true;
+      refreshButton.disabled = true;
+      refreshButton.textContent = "Loading...";
+      status.textContent = "Fetching the latest repository files...";
+
+      try {
+        // Discover the default branch dynamically.
+        const repoResponse = await fetch(API_BASE, {
+          headers: {
+            Accept: "application/vnd.github+json"
+          },
+          cache: "no-store"
+        });
+
         if (!repoResponse.ok) {
-          throw new Error("Repository not found or not public.");
+          if (repoResponse.status === 403 ||
+              repoResponse.status === 429) {
+            throw new Error(
+              "GitHub API rate limit reached. Wait a minute and retry."
+            );
+          }
+
+          if (repoResponse.status === 404) {
+            throw new Error(
+              "Repository not found. Check that it is public."
+            );
+          }
+
+          throw new Error(
+            `GitHub returned HTTP ${repoResponse.status}.`
+          );
         }
 
         const repoData = await repoResponse.json();
         const branch = repoData.default_branch;
 
-        const treeResponse = await fetch(
-          `https://api.github.com/repos/${owner}/${repo}/git/trees/${encodeURIComponent(branch)}?recursive=1`
-        );
+        if (!branch) {
+          throw new Error("Could not determine the default branch.");
+        }
+
+        // Retrieve the entire repository file tree recursively.
+        const treeUrl =
+          `${API_BASE}/git/trees/${encodeURIComponent(branch)}?recursive=1`;
+
+        const treeResponse = await fetch(treeUrl, {
+          headers: {
+            Accept: "application/vnd.github+json"
+          },
+          cache: "no-store"
+        });
 
         if (!treeResponse.ok) {
-          throw new Error("Could not retrieve repository files.");
+          throw new Error(
+            `Could not load repository files (HTTP ${treeResponse.status}).`
+          );
         }
 
         const treeData = await treeResponse.json();
 
-        const images = treeData.tree
+        if (!Array.isArray(treeData.tree)) {
+          throw new Error("GitHub returned an invalid file list.");
+        }
+
+        // Discover supported image formats automatically.
+        const discoveredImages = treeData.tree
           .filter(file =>
             file.type === "blob" &&
-            /\.(png|jpe?g|gif|webp|bmp|svg|avif|ico)$/i.test(file.path)
+            IMAGE_EXTENSIONS.test(file.path)
           )
+          .map(file => ({
+            path: file.path,
+            url: getPagesUrl(file.path)
+          }))
           .sort((a, b) => a.path.localeCompare(b.path));
 
-        container.replaceChildren();
-        imageRows = [];
+        allImages = discoveredImages;
 
-        const encodedPath = file.path
-  .split("/")
-  .map(encodeURIComponent)
-  .join("/");
-
-const url = `https://sgtepsilon.github.io/RetroReplay/${encodedPath}`;
-
-          const row = document.createElement("div");
-          row.className = "image-link";
-
-          const details = document.createElement("div");
-          details.style.flex = "1";
-          details.style.minWidth = "0";
-
-          const link = document.createElement("a");
-          link.href = url;
-          link.target = "_blank";
-          link.rel = "noopener noreferrer";
-          link.textContent = file.path;
-
-          const directUrl = document.createElement("span");
-          directUrl.className = "filename";
-          directUrl.textContent = url;
-
-          details.append(link, directUrl);
-
-          const copy = document.createElement("button");
-          copy.type = "button";
-          copy.textContent = "Copy link";
-
-          copy.addEventListener("click", async () => {
-            try {
-              await navigator.clipboard.writeText(url);
-              copy.textContent = "Copied!";
-              setTimeout(() => copy.textContent = "Copy link", 1500);
-            } catch {
-              window.prompt("Copy this image URL:", url);
-            }
-          });
-
-          row.append(details, copy);
-          container.appendChild(row);
-
-          imageRows.push({
-            row,
-            path: file.path.toLowerCase()
-          });
-        }
-
-        status.textContent =
-          `${images.length} image${images.length === 1 ? "" : "s"} found`;
+        renderImages();
 
         if (treeData.truncated) {
-          status.textContent += " — GitHub returned a truncated file list.";
+          status.textContent +=
+            ". Warning: GitHub truncated the repository file list.";
         }
 
-        if (!images.length) {
-          status.textContent = "No images found in this repository.";
+        if (allImages.length === 0) {
+          status.textContent =
+            "No supported image files were found in the repository.";
         }
       } catch (error) {
-        status.textContent = `${error.message} Check that the repository is public and try again.`;
+        status.textContent =
+          `Unable to load images: ${error.message}`;
+
+        if (allImages.length === 0) {
+          container.replaceChildren();
+
+          const retryButton = createElement(
+            "button",
+            "",
+            "Try again"
+          );
+
+          retryButton.type = "button";
+          retryButton.addEventListener("click", loadImages);
+
+          container.appendChild(retryButton);
+        }
+      } finally {
+        loadInProgress = false;
+        refreshButton.disabled = false;
+        refreshButton.textContent = "Refresh images";
       }
     }
 
-    search.addEventListener("input", () => {
-      const query = search.value.toLowerCase();
-      let visible = 0;
+    // Search updates instantly without another GitHub request.
+    search.addEventListener("input", renderImages);
 
-      for (const item of imageRows) {
-        const matches = item.path.includes(query);
-        item.row.hidden = !matches;
-        if (matches) visible++;
-      }
-
-      status.textContent = `${visible} matching image${visible === 1 ? "" : "s"}`;
+    clearSearchButton.addEventListener("click", () => {
+      search.value = "";
+      renderImages();
+      search.focus();
     });
 
+    // Manually fetch the latest repository contents.
+    refreshButton.addEventListener("click", loadImages);
+
+    // Automatically load the gallery on page startup.
     loadImages();
   </script>
 </body>
 </html>
+```

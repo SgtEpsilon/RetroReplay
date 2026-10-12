@@ -129,13 +129,12 @@
         container.replaceChildren();
         imageRows = [];
 
-        for (const file of images) {
-          // Use the GitHub Pages URL rather than raw.githubusercontent.com.
-          const encodedPath = file.path
-            .split("/")
-            .map(encodeURIComponent)
-            .join("/");
-          const url = pagesBase + encodedPath;
+        const encodedPath = file.path
+  .split("/")
+  .map(encodeURIComponent)
+  .join("/");
+
+const url = `https://sgtepsilon.github.io/RetroReplay/${encodedPath}`;
 
           const row = document.createElement("div");
           row.className = "image-link";
